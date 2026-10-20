@@ -1,0 +1,7 @@
+:root {
+  --photo-hero: url('/cit-building.jpg');
+  --photo-browse: url('/lic-gateway.jpg');
+  --photo-auth: url('/wall-of-fame.jpg');
+  --photo-shop: url('/brick-sign.jpg');
+  --photo-rentals: url('/images/library-steps.jpg');
+}
