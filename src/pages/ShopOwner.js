@@ -12,6 +12,9 @@ import Stars from '../components/Stars';
 import inventory from '../data/shopOwnerInventory';
 import { chatHistory, shops, shopItems } from '../data/mock';
 
+// LOCAL CHANGE: Replaced mock inventory import with live GET fetch to /api/shops/{shopId}/inventory and removed the 350ms mock timer.
+
+
 const initialOrders = [
   { id: 'ORD-101', buyer: 'J. Lim', item: 'Heritage tee (M)', total: '₱420', method: 'GCash', proof: 'Proof uploaded', status: 'Awaiting confirmation' },
   { id: 'ORD-102', buyer: 'P. Reyes', item: 'Campus notebook', total: '₱160', method: 'Cash', proof: 'Cash on pickup', status: 'Ready for pickup' },
@@ -22,7 +25,7 @@ const filters = ['All', 'Low stock', 'Sold out'];
 
 function ShopOwner() {
   const [activeTab, setActiveTab] = useState('inventory');
-  const [items, setItems] = useState(inventory);
+  const [items, setItems] = useState([]); // Start with an empty array instead of his mock data
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('All');
   const [isSaving, setIsSaving] = useState(false);
@@ -31,15 +34,46 @@ function ShopOwner() {
   const [messages, setMessages] = useState(chatHistory);
   const [messageDraft, setMessageDraft] = useState('');
   const shop = shops[0];
+
+  // --- NEW: FETCH THE LIVE INVENTORY FROM YOUR C# BACKEND ---
+  useEffect(() => {
+    const fetchInventory = async () => {
+      setIsLoading(true);
+      try {
+        // We use the exact ShopId GUID you hardcoded in AppDBContext
+        const shopId = "44444444-4444-4444-4444-444444444444";
+        const response = await fetch(`https://localhost:7234/api/shops/${shopId}/inventory`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          // Map the C# properties to match John Gabriel's React properties
+          const mappedItems = data.map(item => ({
+            id: item.listingId,
+            name: item.title,
+            description: item.category,
+            price: `₱${item.price.toFixed(2)}`,
+            stock: item.stockQuantity,
+            art: 'shirt' // Defaulting to shirt illustration for the org tee
+          }));
+          setItems(mappedItems);
+        } else {
+          setLoadError(true);
+        }
+      } catch (error) {
+        setLoadError(true);
+        console.error("Backend offline. Make sure Visual Studio is running on port 7234");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchInventory();
+  }, []);
   const shopTitle = shop.name.split(' ');
   const pendingOrders = initialOrders.filter((order) => order.status !== 'Completed');
   const openChats = messages.filter((message) => !message.own).length;
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 350);
-    return () => window.clearTimeout(timer);
-  }, []);
-
+  
   useEffect(() => {
     if (!isSaving) return undefined;
     const timer = window.setTimeout(() => setIsSaving(false), 500);

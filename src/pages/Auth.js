@@ -4,6 +4,9 @@ import Logo from '../components/Logo';
 import { ROLES, useAuth } from '../context/AuthContext';
 import { isCitEmail } from '../utils/validators';
 
+// LOCAL CHANGE: Wired login handleSubmit to POST https://localhost:7234/api/auth/login for role-based routing.
+
+
 function Auth() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -13,6 +16,7 @@ function Auth() {
   const [password, setPassword] = useState('');
   const [sent, setSent] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [apiError, setApiError] = useState('');
   const validEmail = isCitEmail(email);
   const showEmailError = email.length > 0 && !validEmail;
   const isSignedIn = activeRole !== ROLES.visitor;
@@ -21,15 +25,19 @@ function Auth() {
     setMode(new URLSearchParams(location.search).get('mode') === 'login' ? 'login' : 'signup');
     setSent(false);
     setSubmitted(false);
+    setApiError('');
   }, [location.search]);
 
-  const handleEmail = useCallback((event) => { setEmail(event.target.value); setSubmitted(false); }, []);
-  const handlePassword = useCallback((event) => setPassword(event.target.value), []);
-  const handleSubmit = useCallback((event) => {
-    event.preventDefault();
-    setSubmitted(true);
-    if (validEmail && password.length >= 8) setSent(true);
-  }, [validEmail, password]);
+  const handleEmail = useCallback((event) => {
+    setEmail(event.target.value);
+    setSubmitted(false);
+    setApiError('');
+  }, []);
+
+  const handlePassword = useCallback((event) => {
+    setPassword(event.target.value);
+    setApiError('');
+  }, []);
 
   const handleRoleAccess = useCallback((role) => {
     setRole(role);
@@ -46,6 +54,47 @@ function Auth() {
 
     navigate('/');
   }, [navigate, setRole]);
+
+  const handleSubmit = useCallback(async (event) => {
+    event.preventDefault();
+    setSubmitted(true);
+    setApiError('');
+
+    if (!validEmail || password.length < 8) return;
+
+    // Keep signup as the UI preview for now
+    if (mode === 'signup') {
+      setSent(true);
+      return;
+    }
+
+    // --- LOGIN FETCH TO ASP.NET CORE BACKEND ---
+    try {
+      // 1. Send the POST request with JSON body
+      const response = await fetch('https://localhost:7234/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      // 2. Open the JSON body inside the response envelope
+      const data = await response.json();
+
+      // 3. Check the status code on the outside (200 OK vs 401 Unauthorized)
+      if (!response.ok) {
+        setApiError(data.message || 'Incorrect email or password.');
+        return;
+      }
+
+      // 4. Route based on the role string your C# enum returned
+      if (data.role === 'Admin') handleRoleAccess(ROLES.admin);
+      else if (data.role === 'StoreOwner') handleRoleAccess(ROLES.shopOwner);
+      else if (data.role === 'Student') handleRoleAccess(ROLES.verifiedUser);
+      else handleRoleAccess(ROLES.visitor);
+    } catch (error) {
+      setApiError('Cannot connect to backend server. Make sure the API is running.');
+    }
+  }, [validEmail, password, mode, email, handleRoleAccess]);
 
   const handleLogout = useCallback(() => {
     signOut();
@@ -78,18 +127,13 @@ function Auth() {
         <label htmlFor="password">Password</label>
         <input id="password" name="password" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={handlePassword} placeholder={mode === 'signup' ? 'At least 8 characters' : 'Enter your password'} aria-invalid={submitted && password.length < 8} aria-describedby={submitted && password.length < 8 ? 'password-error' : undefined} />
         {submitted && password.length < 8 && <p className="field-error" id="password-error" role="alert">Use at least 8 characters for your password.</p>}
+        {apiError && <p className="field-error" role="alert">{apiError}</p>}
         {mode === 'signup' && <p className="form-footnote">Your password is stored hashed and never shared.</p>}
         <button type="submit" className="btn btn-primary auth-submit" disabled={!validEmail}>{mode === 'signup' ? 'Create account' : 'Log in'} <span aria-hidden="true">→</span></button>
       </form>
       <div className="auth-links"><Link to="/auth?mode=login">Forgot password?</Link><span>{mode === 'signup' ? <>Already a member? <Link to="/auth?mode=login">Log in</Link></> : <>New to SwapSpot? <Link to="/auth?mode=signup">Sign up</Link></>}</span></div>
       <p className="auth-policy">By continuing, you agree to keep SwapSpot safe and respectful for our campus community.</p>
       {isSignedIn && <button type="button" className="btn btn-secondary" onClick={handleLogout}>Log out of {activeRole === ROLES.admin ? 'Admin' : activeRole === ROLES.shopOwner ? 'Shop Owner' : 'Verified User'} UI</button>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '18px' }}>
-        <button type="button" className="btn btn-secondary" onClick={() => handleRoleAccess(ROLES.admin)}>Continue as Admin</button>
-        <button type="button" className="btn btn-secondary" onClick={() => handleRoleAccess(ROLES.shopOwner)}>Continue as Shop Owner</button>
-        <button type="button" className="btn btn-secondary" onClick={() => handleRoleAccess(ROLES.verifiedUser)}>Continue as Verified User</button>
-        <button type="button" className="btn btn-secondary" onClick={() => handleRoleAccess(ROLES.visitor)}>Continue as Visitor</button>
-      </div>
     </>
   );
 
