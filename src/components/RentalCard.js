@@ -2,8 +2,10 @@ import React from 'react';
 
 const stages = ['Requested', 'Approved', 'Ongoing', 'Returned', 'Completed'];
 
-function RentalCard({ rental }) {
+function RentalCard({ rental, onAdvanceStatus, updating = false }) {
   const currentIndex = stages.indexOf(rental.status);
+  const canAdvance = Boolean(rental.nextStatus && onAdvanceStatus);
+
   return (
     <article className="rental-card card">
       <div className="rental-card-top">
@@ -20,7 +22,14 @@ function RentalCard({ rental }) {
         ))}
       </ol>
       {rental.dueSoon && <p className="return-alert"><span aria-hidden="true">!</span> Return due soon — please arrange your handoff.</p>}
-      <button type="button" className="btn btn-secondary btn-small">{rental.action}</button>
+      <button
+        type="button"
+        className="btn btn-secondary btn-small"
+        disabled={!canAdvance || updating}
+        onClick={() => canAdvance && onAdvanceStatus(rental.id, rental.nextStatus)}
+      >
+        {updating ? 'Updating...' : rental.action}
+      </button>
     </article>
   );
 }

@@ -23,9 +23,14 @@ function Topbar({ dark = false }) {
         <a href="/#how-it-works">How it works</a>
       </nav>
       <div className="nav-actions">
-        <Link className="nav-login" to="/auth">Log in</Link>
-        <Link className="btn btn-outline btn-small" to="/auth">Sign up</Link>
-        {role !== ROLES.visitor && <button type="button" className="btn btn-outline btn-small" onClick={handleLogout}>Log out</button>}
+        {role === ROLES.visitor ? (
+          <>
+            <Link className="nav-login" to="/auth?mode=login">Log in</Link>
+            <Link className="btn btn-outline btn-small" to="/auth?mode=signup">Sign up</Link>
+          </>
+        ) : (
+          <button type="button" className="btn btn-outline btn-small" onClick={handleLogout}>Log out</button>
+        )}
       </div>
     </header>
   );

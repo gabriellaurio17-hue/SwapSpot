@@ -4,12 +4,51 @@ import Illustration from '../components/Illustration';
 import QrCode from '../components/QrCode';
 import Stars from '../components/Stars';
 import Topbar from '../components/Topbar';
-import { chatHistory, listings } from '../data/mock';
+import { useAuth } from '../context/AuthContext';
+import { API_BASE_URL } from '../utils/api';
 
 const rentalDays = [1, 3, 5, 7];
 
 function formatPeso(amount) {
-  return `₱${amount.toLocaleString('en-PH')}`;
+  return `₱${Number(amount).toLocaleString('en-PH')}`;
+}
+
+function pickArt(category = '', title = '') {
+  const text = `${category} ${title}`.toLowerCase();
+  if (text.includes('calc')) return 'calculator';
+  if (text.includes('book') || text.includes('supply') || text.includes('supplies') || text.includes('note')) return 'book';
+  if (text.includes('lab') || text.includes('meter') || text.includes('goggle') || text.includes('pe') || text.includes('mat')) return 'multimeter';
+  return 'shirt';
+}
+
+function formatSellerName(shopName, sellerEmail) {
+  if (shopName) return shopName;
+  if (!sellerEmail) return 'CIT-U Student';
+  const prefix = sellerEmail.split('@')[0].replace(/[._-]+/g, ' ');
+  return prefix.replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function mapApiListing(item) {
+  const numericPrice = Number(item.price ?? 0);
+  const formattedPrice = formatPeso(numericPrice);
+  const sellerName = formatSellerName(item.shopName, item.sellerEmail);
+  return {
+    id: item.listingId,
+    sellerId: item.sellerId,
+    sellerEmail: item.sellerEmail || '',
+    sellerName,
+    shopName: item.shopName || null,
+    title: item.title,
+    category: item.category,
+    stockQuantity: Number(item.stockQuantity ?? 0),
+    condition: `${item.stockQuantity} in stock`,
+    price: item.isRentable ? `${formattedPrice} / day` : formattedPrice,
+    priceValue: numericPrice,
+    mode: item.isRentable ? 'Rent' : 'Sell',
+    rating: 4.9,
+    location: item.shopName || 'CIT-U Campus',
+    art: pickArt(item.category, item.title),
+  };
 }
 
 function ListingSkeleton() {
@@ -27,27 +66,75 @@ function ListingSkeleton() {
 
 function Listing() {
   const location = useLocation();
-  const listingId = new URLSearchParams(location.search).get('id') || 'calc-fx991';
-  const listing = useMemo(() => listings.find((item) => item.id === listingId), [listingId]);
+  const { user } = useAuth();
+  const listingId = new URLSearchParams(location.search).get('id');
+
+  const [listing, setListing] = useState(null);
+  const [allListings, setAllListings] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedDays, setSelectedDays] = useState(null);
   const [payment, setPayment] = useState('gcash');
   const [draft, setDraft] = useState('');
-  const [messages, setMessages] = useState(chatHistory);
+  const [messages, setMessages] = useState([]);
   const [requestStatus, setRequestStatus] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   const [paidMethod, setPaidMethod] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     setIsLoading(true);
     setSelectedDays(null);
     setDraft('');
-    setMessages(chatHistory);
     setRequestStatus('');
+    setActionError('');
     setSaved(false);
     setPaidMethod('');
-    const timer = window.setTimeout(() => setIsLoading(false), 240);
-    return () => window.clearTimeout(timer);
+
+    const loadData = async () => {
+      try {
+        const listRes = await fetch(`${API_BASE_URL}/api/Listings`);
+        const listData = listRes.ok ? await listRes.json() : [];
+        const mappedList = Array.isArray(listData) ? listData.map(mapApiListing) : [];
+        if (!cancelled) setAllListings(mappedList);
+
+        let target = null;
+        if (listingId) {
+          const detailRes = await fetch(`${API_BASE_URL}/api/Listings/${encodeURIComponent(listingId)}`);
+          if (detailRes.ok) {
+            target = mapApiListing(await detailRes.json());
+          }
+        } else if (mappedList.length > 0) {
+          target = mappedList[0];
+        }
+
+        if (!cancelled) {
+          setListing(target);
+          setMessages(
+            target
+              ? [
+                  {
+                    id: 'welcome-msg',
+                    sender: target.sellerName,
+                    text: `Hi! "${target.title}" is available on campus. Let me know when you'd like to meet up.`,
+                    own: false,
+                  },
+                ]
+              : [],
+          );
+        }
+      } catch {
+        if (!cancelled) setListing(null);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    loadData();
+    return () => {
+      cancelled = true;
+    };
   }, [listingId]);
 
   const handleSend = useCallback((event) => {
@@ -58,24 +145,105 @@ function Listing() {
     setDraft('');
   }, [draft]);
 
-  const handleRequest = useCallback(() => {
-    if (!listing || isLoading || listing.available === false || listing.status === 'Unavailable' || listing.soldOut) return;
-    if (listing.mode === 'Sell' || selectedDays) {
-      setRequestStatus(listing.mode === 'Sell' ? 'chat' : 'sent');
+  const handleRequest = useCallback(async () => {
+    if (!listing || isLoading || listing.stockQuantity <= 0 || actionLoading) return;
+
+    setActionError('');
+
+    if (listing.mode === 'Sell') {
+      setRequestStatus('chat');
+      return;
     }
-  }, [isLoading, listing, selectedDays]);
+
+    if (!selectedDays) return;
+
+    if (!user?.userId) {
+      setActionError('Please log out and log back in so we can link this rental to your account.');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/Transactions/rent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: listing.id,
+          buyerId: user.userId,
+          days: selectedDays,
+          depositAmount: 200,
+          paymentMethod: payment === 'gcash' ? 'GCash' : 'Cash',
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setActionError(data.message || 'Could not submit rental request.');
+        return;
+      }
+
+      setListing((prev) => prev ? {
+        ...prev,
+        stockQuantity: data.remainingStock,
+        condition: `${data.remainingStock} in stock`,
+      } : prev);
+      setRequestStatus('sent');
+    } catch {
+      setActionError('Cannot connect to backend server. Make sure the API is running.');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [actionLoading, isLoading, listing, payment, selectedDays, user]);
+
+  const handleMarkPaid = useCallback(async () => {
+    if (!listing || listing.stockQuantity <= 0 || actionLoading) return;
+
+    setActionError('');
+
+    if (!user?.userId) {
+      setActionError('Please log out and log back in so we can record this purchase.');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/Transactions/buy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listingId: listing.id,
+          buyerId: user.userId,
+          paymentMethod: payment === 'gcash' ? 'GCash' : 'Cash',
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setActionError(data.message || 'Could not record payment.');
+        return;
+      }
+
+      setListing((prev) => prev ? {
+        ...prev,
+        stockQuantity: data.remainingStock,
+        condition: `${data.remainingStock} in stock`,
+      } : prev);
+      setPaidMethod(payment);
+    } catch {
+      setActionError('Cannot connect to backend server. Make sure the API is running.');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [actionLoading, listing, payment, user]);
 
   const relatedListings = useMemo(
-    () => listing ? listings.filter((item) => item.id !== listing.id).slice(0, 3) : [],
-    [listing],
+    () => listing ? allListings.filter((item) => item.id !== listing.id).slice(0, 3) : [],
+    [allListings, listing],
   );
 
-  const priceMatch = listing?.price.match(/[\d,]+(?:\.\d+)?/);
-  const itemPrice = priceMatch ? Number(priceMatch[0].replace(/,/g, '')) : 0;
+  const itemPrice = listing?.priceValue ?? 0;
   const isSale = listing?.mode === 'Sell';
-  const isUnavailable = Boolean(listing && (
-    listing.available === false || listing.status === 'Unavailable' || listing.soldOut
-  ));
+  const isUnavailable = Boolean(listing && listing.stockQuantity <= 0);
   const rentalTotal = selectedDays ? selectedDays * itemPrice : null;
 
   return (
@@ -88,7 +256,7 @@ function Listing() {
           <section className="card ld-state-card" role="alert">
             <span className="eyebrow">Listing unavailable</span>
             <h1>We couldn’t find this listing.</h1>
-            <p>It may have been removed or the link may be incorrect.</p>
+            <p>It may have been removed or the backend server may not be running.</p>
             <Link to="/browse" className="btn btn-primary">Back to browse</Link>
           </section>
         ) : (
@@ -107,7 +275,7 @@ function Listing() {
                   <span className="ld-ring-dot" aria-hidden="true" />
                   <Illustration type={listing.art} className="ld-product-art" />
                   <div className="ld-photo-meta">
-                    <span className="ld-photo-chip">01 / 03 photos</span>
+                    <span className="ld-photo-chip">01 / 01 photo</span>
                     <span className="ld-photo-chip">Product illustration</span>
                   </div>
                   <button
@@ -119,41 +287,34 @@ function Listing() {
                   >
                     <span aria-hidden="true">{saved ? '♥' : '♡'}</span>
                   </button>
-                  <div className="ld-photo-pager" role="group" aria-label="Photo 1 of 3">
-                    <span className="active" aria-hidden="true" />
-                    <span aria-hidden="true" />
-                    <span aria-hidden="true" />
-                  </div>
                 </div>
 
                 <div className="ld-details">
                   <div className="ld-tags">
                     {isUnavailable ? (
-                      <span className="badge badge-maroon">Unavailable</span>
+                      <span className="badge badge-maroon">Out of stock</span>
                     ) : (
                       <span className={`badge ${isSale ? 'badge-maroon' : 'badge-gold'}`}>{isSale ? 'For sale' : 'For rent'}</span>
                     )}
                     <span className="chip">{listing.category}</span>
-                    <span className="chip">{listing.condition}</span>
+                    <span className="chip">{listing.stockQuantity} in stock</span>
                   </div>
 
                   <h1 className="ld-title">{listing.title}</h1>
                   <div className="ld-seller-line">
-                    <span>Listed by <Link to="/browse">Mika C.</Link></span>
+                    <span>Listed by <Link to="/browse">{listing.sellerName}</Link></span>
                     <span className="ld-separator" aria-hidden="true">·</span>
                     <span className="verified-inline">✓ Verified @cit.edu</span>
                     <span className="ld-separator" aria-hidden="true">·</span>
                     <Stars rating={listing.rating} count={18} compact />
                   </div>
                   <p className="ld-description">
-                    {listing.id === 'calc-fx991'
-                      ? 'Reliable scientific calculator in great condition, with the original cover and battery. Perfect for exams and everyday engineering coursework.'
-                      : `${listing.title} in ${listing.condition.toLowerCase()} condition. A useful campus find, ready for pickup at ${listing.location}.`}
+                    {listing.title} listed by {listing.sellerName}. Ready for campus handoff at {listing.location} ({listing.stockQuantity} currently available).
                   </p>
 
                   <div className={`ld-specs${isSale ? ' ld-specs-sale' : ''}`} aria-label="Listing details">
                     <div className="ld-spec">
-                      <span className="ld-spec-icon" aria-hidden="true">{isSale ? '₱' : '₱'}</span>
+                      <span className="ld-spec-icon" aria-hidden="true">₱</span>
                       <span className="ld-spec-label">{isSale ? 'Price' : 'Rental rate'}</span>
                       <strong>{isSale ? listing.price : `${formatPeso(itemPrice)} / day`}</strong>
                     </div>
@@ -173,8 +334,8 @@ function Listing() {
                     )}
                     <div className="ld-spec">
                       <span className="ld-spec-icon" aria-hidden="true">✓</span>
-                      <span className="ld-spec-label">Condition</span>
-                      <strong>{listing.condition}</strong>
+                      <span className="ld-spec-label">Availability</span>
+                      <strong>{listing.stockQuantity} in stock</strong>
                     </div>
                   </div>
 
@@ -208,28 +369,33 @@ function Listing() {
                     </section>
                   )}
 
+                  {actionError && <p className="field-error" role="alert">{actionError}</p>}
+
                   <button
                     type="button"
                     className="btn btn-primary ld-cta"
-                    disabled={isUnavailable || (!isSale && !selectedDays)}
+                    disabled={isUnavailable || actionLoading || (!isSale && !selectedDays)}
                     onClick={handleRequest}
                   >
                     {isUnavailable
-                      ? 'Unavailable'
-                      : requestStatus === 'sent'
-                        ? 'Request sent'
-                        : requestStatus === 'chat'
-                          ? 'Chat started'
-                          : isSale
-                            ? 'Chat to buy'
-                            : <>Request to rent <span aria-hidden="true">→</span></>}
+                      ? 'Out of stock'
+                      : actionLoading
+                        ? 'Submitting...'
+                        : requestStatus === 'sent'
+                          ? 'Rental request sent ✓'
+                          : requestStatus === 'chat'
+                            ? 'Chat started'
+                            : isSale
+                              ? 'Chat to buy'
+                              : <>Request to rent <span aria-hidden="true">→</span></>}
                   </button>
-                  {requestStatus === 'chat' && <p className="ld-request-feedback" role="status">You can message Mika in the chat panel.</p>}
+                  {requestStatus === 'chat' && <p className="ld-request-feedback" role="status">You can message {listing.sellerName} in the chat panel or mark payment on the right.</p>}
+                  {requestStatus === 'sent' && <p className="ld-request-feedback" role="status">Rental saved! View it anytime on your <Link to="/rentals">Rentals</Link> page.</p>}
                   <button type="button" className="ld-report-link">Report this listing</button>
 
                   <section className="ld-more">
                     <div className="ld-more-heading">
-                      <h2>More from Mika</h2>
+                      <h2>More on SwapSpot</h2>
                       <Link to="/browse">View all</Link>
                     </div>
                     <div className="ld-related-items">
@@ -254,7 +420,7 @@ function Listing() {
                   <div className="ld-card-heading">
                     <div>
                       <span className="eyebrow">Direct messages</span>
-                      <h2>Chat with Mika</h2>
+                      <h2>Chat with {listing.sellerName}</h2>
                     </div>
                     <span className="online-dot" aria-label="Online" />
                   </div>
@@ -267,7 +433,7 @@ function Listing() {
                     ))}
                   </div>
                   <form className="ld-chat-form" onSubmit={handleSend}>
-                    <label className="sr-only" htmlFor="ld-message">Write a message to Mika</label>
+                    <label className="sr-only" htmlFor="ld-message">Write a message to {listing.sellerName}</label>
                     <input id="ld-message" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a message…" />
                     <button type="submit" aria-label="Send message" disabled={!draft.trim()}>→</button>
                   </form>
@@ -287,8 +453,8 @@ function Listing() {
                   </div>
                   {payment === 'gcash' ? (
                     <div className="ld-payment-qr">
-                      <QrCode label="Sample GCash QR code for Mika" />
-                      <span>Seller’s GCash QR</span>
+                      <QrCode label={`Sample GCash QR code for ${listing.sellerName}`} />
+                      <span>{listing.sellerName}’s GCash QR</span>
                     </div>
                   ) : (
                     <div className="ld-cash-note">Pay in person at the meetup</div>
@@ -298,9 +464,10 @@ function Listing() {
                     type="button"
                     className="btn btn-secondary ld-paid-button"
                     aria-pressed={paidMethod === payment}
-                    onClick={() => setPaidMethod(payment)}
+                    disabled={isUnavailable || actionLoading}
+                    onClick={handleMarkPaid}
                   >
-                    {paidMethod === payment ? '✓ Marked as paid' : `Paid (${payment === 'gcash' ? 'GCash' : 'Cash'})`}
+                    {paidMethod === payment ? '✓ Purchase recorded' : `Confirm purchase (${payment === 'gcash' ? 'GCash' : 'Cash'})`}
                   </button>
                 </section>
               </aside>
