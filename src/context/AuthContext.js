@@ -93,12 +93,13 @@ export function AuthProvider({ children }) {
   const role = useMemo(() => computeRole(session, profile), [session, profile]);
 
   const signUp = useCallback(async (email, password, fullName) => {
+    const siteUrl = process.env.REACT_APP_SITE_URL || 'https://swap-spot-liart.vercel.app';
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: { full_name: fullName },
-        emailRedirectTo: window.location.origin + '/auth?mode=login',
+        emailRedirectTo: `${siteUrl}/auth?mode=login`,
       },
     });
     if (error) throw error;

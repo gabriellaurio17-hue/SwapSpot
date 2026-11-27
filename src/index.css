@@ -1137,7 +1137,7 @@ h1 em, h2 em { color: var(--maroon-700); font-weight: 400; }
 .dash-stat-icon { width: 34px; height: 34px; display: grid; grid-row: 1 / span 2; place-items: center; border-radius: 11px; background: #F2E5D2; color: #5A0B18; font-size: 17px; font-weight: 800; }
 .dash-stat-attention .dash-stat-icon { background: #E3B341; color: #3F0712; }
 .dash-stat-label { color: #51403A; font-size: 12px; font-weight: 700; }
-.dash-stat-value { grid-column: 1 / -1; margin-top: 9px; color: #25120F; font: 500 31px/1 'Fraunces', Georgia, serif; letter-spacing: -.03em; }
+.dash-stat-value { grid-column: 1 / -1; margin-top: 9px; color: #25120F; font: 500 31px/1 'Fraunces', Georgia, serif; letter-spacing: -.03em; overflow-wrap: break-word; word-break: break-word; }
 .dash-stat-hint { grid-column: 1 / -1; margin-top: 5px; color: #51403A; font-size: 12px; }
 .dash-card { min-width: 0; border: 1px solid #E8DDCB; border-radius: 18px; background: #FFFAF2; box-shadow: 0 8px 25px rgba(63,7,18,.045); }
 .dash-report-split { min-width: 0; display: grid; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr); align-items: start; gap: 13px; }
