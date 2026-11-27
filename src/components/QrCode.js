@@ -9,7 +9,8 @@ const cells = [
   [7, 18, 2, 1], [11, 18, 2, 1],
 ];
 
-function QrCode({ label = 'Sample GCash QR code' }) {
+function QrCode({ label = 'Sample GCash QR code', src }) {
+  if (src) return <img className="qr-code" src={src} alt={label} />;
   return <svg className="qr-code" viewBox="0 0 21 21" role="img" aria-label={label}><rect width="21" height="21" fill="#fff" />{cells.map(([x, y, width, height], index) => <rect key={`${x}-${y}-${index}`} x={x} y={y} width={width} height={height} fill="#25120f" />)}</svg>;
 }
 

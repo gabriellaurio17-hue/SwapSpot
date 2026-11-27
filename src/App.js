@@ -6,25 +6,61 @@ const Landing = lazy(() => import('./pages/Landing'));
 const Auth = lazy(() => import('./pages/Auth'));
 const Browse = lazy(() => import('./pages/Browse'));
 const Listing = lazy(() => import('./pages/Listing'));
+const Messages = lazy(() => import('./pages/Messages'));
 const Rentals = lazy(() => import('./pages/Rentals'));
 const Shop = lazy(() => import('./pages/Shop'));
+const ShopApply = lazy(() => import('./pages/ShopApply'));
 const Admin = lazy(() => import('./pages/Admin'));
 const ShopOwner = lazy(() => import('./pages/ShopOwner'));
 const ShopOwnerInventoryForm = lazy(() => import('./pages/ShopOwnerInventoryForm'));
+const Profile = lazy(() => import('./pages/Profile'));
+const CreateListing = lazy(() => import('./pages/CreateListing'));
 
-function RoleRoute({ children, role }) {
-  const { role: currentRole } = useAuth();
+function RoleRoute({ children, role: requiredRole }) {
+  const { role: currentRole, loading } = useAuth();
+
+  if (loading) {
+    return <main className="loading-screen" aria-label="Loading SwapSpot"><span className="loading-mark">S</span></main>;
+  }
 
   // TODO: Enforce this role check in the ASP.NET Core API and Supabase RLS too.
-  return currentRole === role
+  return currentRole === requiredRole
     ? children
     : <Navigate to="/" replace state={{ accessDenied: true }} />;
 }
 
 function NonVisitorRoute({ children }) {
-  const { role } = useAuth();
+  const { role, loading } = useAuth();
+
+  if (loading) {
+    return <main className="loading-screen" aria-label="Loading SwapSpot"><span className="loading-mark">S</span></main>;
+  }
 
   return role !== ROLES.visitor
+    ? children
+    : <Navigate to="/" replace state={{ accessDenied: true }} />;
+}
+
+function VerifiedRoute({ children }) {
+  const { role, loading } = useAuth();
+
+  if (loading) {
+    return <main className="loading-screen" aria-label="Loading SwapSpot"><span className="loading-mark">S</span></main>;
+  }
+
+  return role === ROLES.verified
+    ? children
+    : <Navigate to="/" replace state={{ accessDenied: true }} />;
+}
+
+function VerifiedOrShopOwnerRoute({ children }) {
+  const { role, loading } = useAuth();
+
+  if (loading) {
+    return <main className="loading-screen" aria-label="Loading SwapSpot"><span className="loading-mark">S</span></main>;
+  }
+
+  return role === ROLES.verified || role === ROLES.shopOwner
     ? children
     : <Navigate to="/" replace state={{ accessDenied: true }} />;
 }
@@ -49,25 +85,55 @@ function AccessDeniedNotice() {
   );
 }
 
+function AppInner() {
+  const { role, loading, signOut } = useAuth();
+  const [suspended, setSuspended] = React.useState(false);
+
+  useEffect(() => {
+    if (!loading && role === ROLES.suspended) {
+      setSuspended(true);
+      signOut();
+    }
+  }, [loading, role, signOut]);
+
+  if (loading) {
+    return <main className="loading-screen" aria-label="Loading SwapSpot"><span className="loading-mark">S</span></main>;
+  }
+
+  if (suspended) {
+    return <div className="dash-access-notice" role="alert"><span>Your account is suspended.</span></div>;
+  }
+
+  return (
+    <>
+      <AccessDeniedNotice />
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/auth" element={<Auth />} />
+        <Route path="/browse" element={<Browse />} />
+        <Route path="/listing" element={<VerifiedRoute><Listing /></VerifiedRoute>} />
+        <Route path="/messages" element={<VerifiedOrShopOwnerRoute><Messages /></VerifiedOrShopOwnerRoute>} />
+        <Route path="/sell" element={<VerifiedRoute><CreateListing /></VerifiedRoute>} />
+        <Route path="/rentals" element={<VerifiedRoute><Rentals /></VerifiedRoute>} />
+        <Route path="/shop" element={<VerifiedRoute><Shop /></VerifiedRoute>} />
+        <Route path="/shop/apply" element={<VerifiedRoute><ShopApply /></VerifiedRoute>} />
+        <Route path="/admin" element={<RoleRoute role={ROLES.admin}><Admin /></RoleRoute>} />
+        <Route path="/shop-owner/inventory/new" element={<RoleRoute role={ROLES.shopOwner}><ShopOwnerInventoryForm mode="add" /></RoleRoute>} />
+        <Route path="/shop-owner/inventory/:itemId/edit" element={<RoleRoute role={ROLES.shopOwner}><ShopOwnerInventoryForm mode="edit" /></RoleRoute>} />
+        <Route path="/shop-owner" element={<RoleRoute role={ROLES.shopOwner}><ShopOwner /></RoleRoute>} />
+        <Route path="/profile" element={<NonVisitorRoute><Profile /></NonVisitorRoute>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <Suspense fallback={<main className="loading-screen" aria-label="Loading SwapSpot"><span className="loading-mark">S</span></main>}>
-          <AccessDeniedNotice />
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/browse" element={<Browse />} />
-            <Route path="/listing" element={<NonVisitorRoute><Listing /></NonVisitorRoute>} />
-            <Route path="/rentals" element={<NonVisitorRoute><Rentals /></NonVisitorRoute>} />
-            <Route path="/shop" element={<NonVisitorRoute><Shop /></NonVisitorRoute>} />
-            <Route path="/admin" element={<RoleRoute role={ROLES.admin}><Admin /></RoleRoute>} />
-            <Route path="/shop-owner/inventory/new" element={<RoleRoute role={ROLES.shopOwner}><ShopOwnerInventoryForm mode="add" /></RoleRoute>} />
-            <Route path="/shop-owner/inventory/:itemId/edit" element={<RoleRoute role={ROLES.shopOwner}><ShopOwnerInventoryForm mode="edit" /></RoleRoute>} />
-            <Route path="/shop-owner" element={<RoleRoute role={ROLES.shopOwner}><ShopOwner /></RoleRoute>} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <AppInner />
         </Suspense>
       </AuthProvider>
     </BrowserRouter>

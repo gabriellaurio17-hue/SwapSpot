@@ -991,6 +991,16 @@ h1 em, h2 em { color: var(--maroon-700); font-weight: 400; }
 .ld-cta:disabled { opacity: .48; }
 .ld-request-feedback { margin: 8px 0 0; color: #35674d; font-size: 9px; text-align: center; }
 .ld-report-link { min-height: 39px; display: block; margin: 4px auto 15px; border: 0; background: transparent; color: #5D4139; font-size: 8px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.ld-buy-confirm-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: rgba(37,18,15,.58); backdrop-filter: blur(3px); }
+.ld-buy-confirm-card { width: min(100%, 430px); padding: 25px; border: 1px solid rgba(61,7,16,.12); border-radius: 20px; background: var(--cream); box-shadow: 0 22px 70px rgba(20,8,7,.3); animation: ld-confirm-enter .18s ease-out; }
+.ld-buy-confirm-card h2 { margin: 8px 0; color: #25120F; font: 600 25px 'Fraunces', Georgia, serif; }
+.ld-buy-confirm-card > p { margin: 8px 0; color: #51403A; font-size: 12px; line-height: 1.6; }
+.ld-buy-confirm-card > .ld-buy-confirm-note { color: #827168; font-size: 10px; }
+.ld-buy-confirm-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
+.ld-buy-confirm-actions .btn { min-height: 42px; padding: 0 17px; border-radius: 999px; font-size: 10px; }
+.ld-buy-confirm-actions .btn-primary { background: #6B0F1A; color: #fff; }
+.ld-buy-confirm-actions .btn-primary:hover:not(:disabled) { background: #5A0B18; }
+@keyframes ld-confirm-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .ld-more { padding-top: 14px; border-top: 1px solid var(--line); }
 .ld-more-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .ld-more-heading h2 { margin: 0; color: #25120F; font: 600 16px 'Fraunces', Georgia, serif; }
@@ -1073,6 +1083,7 @@ h1 em, h2 em { color: var(--maroon-700); font-weight: 400; }
   .ld-product-art { transform: none; transition: none; }
   .ld-related-item { transition: none; }
   .ld-skeleton::after { animation: none; }
+  .ld-buy-confirm-card { animation: none; }
 }
 
 .dash-shell { min-height: 100vh; display: grid; grid-template-columns: 230px minmax(0, 1fr); background: #F7F1E6; color: #25120F; }

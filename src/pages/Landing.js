@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import Logo from '../components/Logo';
 import Topbar from '../components/Topbar';
@@ -6,10 +6,66 @@ import ListingCard from '../components/ListingCard';
 import Illustration from '../components/Illustration';
 import QrCode from '../components/QrCode';
 import Stars from '../components/Stars';
-import { listings, shops, steps } from '../data/mock';
+import { mapListing } from '../lib/mappers';
+import { supabase } from '../lib/supabaseClient';
+
+const steps = [
+  { id: 'verify', title: 'Verify', text: 'Join with your @cit.edu email.' },
+  { id: 'browse', title: 'Browse', text: 'Find what you need on campus.' },
+  { id: 'chat', title: 'Chat', text: 'Agree on details with a student.' },
+  { id: 'pay', title: 'Pay and meet', text: 'Exchange safely in person.' },
+  { id: 'rate', title: 'Return and rate', text: 'Close the deal and leave a review.' },
+];
 
 function Landing() {
-  const freshListings = useMemo(() => listings.slice(0, 3), []);
+  const [freshListings, setFreshListings] = useState([]);
+  const [shops, setShops] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLandingData() {
+      setIsLoading(true);
+      setLoadError('');
+      try {
+        const [
+          { data: listingRows, error: listingsError },
+          { data: shopRows, error: shopsError },
+        ] = await Promise.all([
+          supabase
+            .from('listings')
+            .select('*')
+            .eq('status', 'available')
+            .order('created_at', { ascending: false })
+            .limit(3),
+          supabase
+            .from('shops')
+            .select('id, name, description')
+            .eq('status', 'approved')
+            .order('name', { ascending: true })
+            .limit(2),
+        ]);
+        if (listingsError) throw listingsError;
+        if (shopsError) throw shopsError;
+        if (!cancelled) {
+          setFreshListings((listingRows || []).map(mapListing));
+          setShops(shopRows || []);
+        }
+      } catch (error) {
+        if (!cancelled) setLoadError(error.message || 'Could not load marketplace highlights.');
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+
+    loadLandingData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="landing-page">
       <section className="hero-shell photo-bg photo-bg--hero">
@@ -31,7 +87,10 @@ function Landing() {
           </div>
           <aside className="hero-shops">
             <div className="hero-shops-title"><span className="eyebrow eyebrow-gold">Campus collective</span><Link to="/shop">All org shops <span aria-hidden="true">↗</span></Link></div>
-            {shops.map((shop, index) => <Link to="/shop" className="hero-shop-tile" key={shop.id}><span className={`shop-monogram monogram-${index}`}>{shop.name.split(' ').map((word) => word[0]).slice(0, 2).join('')}</span><span><strong>{shop.name}</strong><small>{shop.subtitle}</small></span><span className="tile-arrow" aria-hidden="true">↗</span></Link>)}
+            {isLoading && <p role="status">Loading approved shops…</p>}
+            {!isLoading && !loadError && shops.map((shop, index) => <Link to={`/shop?id=${encodeURIComponent(shop.id)}`} className="hero-shop-tile" key={shop.id}><span className={`shop-monogram monogram-${index}`}>{shop.name.split(' ').map((word) => word[0]).slice(0, 2).join('')}</span><span><strong>{shop.name}</strong><small>{shop.description || 'Approved campus shop'}</small></span><span className="tile-arrow" aria-hidden="true">↗</span></Link>)}
+            {!isLoading && !loadError && shops.length === 0 && <p>No approved shops yet.</p>}
+            {loadError && <p role="alert">{loadError}</p>}
           </aside>
         </div>
         <div className="hero-meta container"><span><strong>01</strong> One campus community</span><span><strong>02</strong> Verified .edu members</span><span><strong>03</strong> Deals made face-to-face</span><span className="hero-meta-note">Built for campus life in Cebu City</span></div>
@@ -52,7 +111,15 @@ function Landing() {
 
         <section className="fresh-section container">
           <div className="section-heading section-heading-row"><div><span className="eyebrow">Good things move fast</span><h2>Fresh on SwapSpot</h2></div><Link to="/browse" className="text-link">Browse all listings <span aria-hidden="true">→</span></Link></div>
-          <div className="grid-auto listing-grid">{freshListings.map((listing) => <ListingCard listing={listing} key={listing.id} />)}</div>
+          {isLoading ? (
+            <p role="status">Loading fresh listings…</p>
+          ) : loadError ? (
+            <p role="alert">{loadError}</p>
+          ) : freshListings.length ? (
+            <div className="grid-auto listing-grid">{freshListings.map((listing) => <ListingCard listing={listing} key={listing.id} />)}</div>
+          ) : (
+            <p>No available listings yet.</p>
+          )}
         </section>
 
         <section className="shops-promo container">
