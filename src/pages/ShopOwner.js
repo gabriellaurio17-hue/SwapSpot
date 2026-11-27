@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import {
   DashboardError,
@@ -9,76 +9,106 @@ import {
 } from '../components/DashboardShell';
 import Illustration from '../components/Illustration';
 import Stars from '../components/Stars';
-import inventory from '../data/shopOwnerInventory';
-import { chatHistory, shops, shopItems } from '../data/mock';
+import { chatHistory } from '../data/mock';
+import { API_BASE_URL } from '../utils/api';
 
-// LOCAL CHANGE: Replaced mock inventory import with live GET fetch to /api/shops/{shopId}/inventory and removed the 350ms mock timer.
-
-
-const initialOrders = [
-  { id: 'ORD-101', buyer: 'J. Lim', item: 'Heritage tee (M)', total: '₱420', method: 'GCash', proof: 'Proof uploaded', status: 'Awaiting confirmation' },
-  { id: 'ORD-102', buyer: 'P. Reyes', item: 'Campus notebook', total: '₱160', method: 'Cash', proof: 'Cash on pickup', status: 'Ready for pickup' },
-  { id: 'ORD-103', buyer: 'A. Mendoza', item: 'Engineering org tee (L)', total: '₱380', method: 'GCash', proof: 'Proof uploaded', status: 'Completed' },
-];
-
+const DEFAULT_SHOP_ID = '44444444-4444-4444-4444-444444444444';
 const filters = ['All', 'Low stock', 'Sold out'];
+
+function pickArt(category = '', title = '') {
+  const text = `${category} ${title}`.toLowerCase();
+  if (text.includes('book') || text.includes('supply') || text.includes('supplies') || text.includes('note')) return 'book';
+  if (text.includes('calc')) return 'calculator';
+  if (text.includes('lab') || text.includes('meter')) return 'multimeter';
+  return 'shirt';
+}
 
 function ShopOwner() {
   const [activeTab, setActiveTab] = useState('inventory');
-  const [items, setItems] = useState([]); // Start with an empty array instead of his mock data
+  const [shop, setShop] = useState({
+    name: 'Engineering Student Council',
+    subtitle: 'Made by students, for students',
+    status: 'Approved',
+    rating: 4.9,
+    reviews: 28,
+  });
+  const [items, setItems] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('All');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [completingOrderId, setCompletingOrderId] = useState('');
   const [messages, setMessages] = useState(chatHistory);
   const [messageDraft, setMessageDraft] = useState('');
-  const shop = shops[0];
 
-  // --- NEW: FETCH THE LIVE INVENTORY FROM YOUR C# BACKEND ---
-  useEffect(() => {
-    const fetchInventory = async () => {
-      setIsLoading(true);
-      try {
-        // We use the exact ShopId GUID you hardcoded in AppDBContext
-        const shopId = "44444444-4444-4444-4444-444444444444";
-        const response = await fetch(`https://localhost:7234/api/shops/${shopId}/inventory`);
-        
-        if (response.ok) {
-          const data = await response.json();
-          // Map the C# properties to match John Gabriel's React properties
-          const mappedItems = data.map(item => ({
-            id: item.listingId,
-            name: item.title,
-            description: item.category,
-            price: `₱${item.price.toFixed(2)}`,
-            stock: item.stockQuantity,
-            art: 'shirt' // Defaulting to shirt illustration for the org tee
-          }));
-          setItems(mappedItems);
-        } else {
-          setLoadError(true);
-        }
-      } catch (error) {
-        setLoadError(true);
-        console.error("Backend offline. Make sure Visual Studio is running on port 7234");
-      } finally {
-        setIsLoading(false);
+  // Fetches live shop profile, inventory, and customer orders from ASP.NET Core ShopsController.
+  const loadDashboard = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(false);
+    try {
+      // GET /api/Shops/{shopId} — loads shop name and approval status from Shops table.
+      // GET /api/Shops/{shopId}/inventory — loads all Listings owned by this shop.
+      // GET /api/Shops/{shopId}/orders — loads all Transactions for this shop's listings.
+      const [shopRes, invRes, ordersRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/Shops/${DEFAULT_SHOP_ID}`),
+        fetch(`${API_BASE_URL}/api/Shops/${DEFAULT_SHOP_ID}/inventory`),
+        fetch(`${API_BASE_URL}/api/Shops/${DEFAULT_SHOP_ID}/orders`),
+      ]);
+
+      if (shopRes.ok) {
+        const shopData = await shopRes.json();
+        setShop((prev) => ({
+          ...prev,
+          name: shopData.shopName || prev.name,
+          status: shopData.status || prev.status,
+        }));
       }
-    };
 
-    fetchInventory();
+      if (!invRes.ok) throw new Error('Inventory request failed');
+      const invData = await invRes.json();
+      setItems((Array.isArray(invData) ? invData : []).map((item) => ({
+        id: item.listingId,
+        name: item.title,
+        description: item.category,
+        priceValue: Number(item.price ?? 0),
+        price: `₱${Number(item.price ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        stock: Number(item.stockQuantity ?? 0),
+        art: pickArt(item.category, item.title),
+      })));
+
+      if (ordersRes.ok) {
+        const ordersData = await ordersRes.json();
+        setOrders((Array.isArray(ordersData) ? ordersData : []).map((order) => ({
+          id: order.transactionId,
+          shortId: `ORD-${String(order.transactionId).slice(0, 6).toUpperCase()}`,
+          buyer: order.buyerEmail,
+          item: order.itemTitle,
+          totalValue: Number(order.total ?? 0),
+          total: `₱${Number(order.total ?? 0).toLocaleString('en-PH')}`,
+          method: order.paymentMethod || 'GCash',
+          proof: order.paymentMethod === 'Cash' ? 'Cash on pickup' : 'GCash transfer',
+          status: order.status || 'Paid',
+        })));
+      }
+    } catch {
+      setLoadError(true);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
-  const shopTitle = shop.name.split(' ');
-  const pendingOrders = initialOrders.filter((order) => order.status !== 'Completed');
-  const openChats = messages.filter((message) => !message.own).length;
 
-  
   useEffect(() => {
-    if (!isSaving) return undefined;
-    const timer = window.setTimeout(() => setIsSaving(false), 500);
-    return () => window.clearTimeout(timer);
-  }, [isSaving]);
+    loadDashboard();
+  }, [loadDashboard]);
+
+  const shopTitle = shop.name.split(' ');
+  const pendingOrders = orders.filter((order) => order.status !== 'Completed' && order.status !== 'Cancelled');
+  const totalRevenue = orders
+    .filter((order) => order.status !== 'Cancelled')
+    .reduce((sum, order) => sum + order.totalValue, 0);
+  const openChats = messages.filter((message) => !message.own).length;
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -94,17 +124,50 @@ function ShopOwner() {
   const liveItems = items.filter((item) => item.stock > 0).length;
   const soldOutItems = items.filter((item) => item.stock === 0).length;
 
-  const handleRetry = () => {
-    setLoadError(false);
-    setIsLoading(true);
-    window.setTimeout(() => setIsLoading(false), 350);
-  };
+  // PATCH /api/Shops/{shopId}/inventory/{listingId}/stock — saves +/- stock updates to Listings table.
+  const updateStock = async (id, change) => {
+    const target = items.find((item) => item.id === id);
+    if (!target) return;
+    const nextStock = Math.max(0, target.stock + change);
 
-  const updateStock = (id, change) => {
     setItems((current) => current.map((item) => (
-      item.id === id ? { ...item, stock: Math.max(0, item.stock + change) } : item
+      item.id === id ? { ...item, stock: nextStock } : item
     )));
     setIsSaving(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/Shops/${DEFAULT_SHOP_ID}/inventory/${encodeURIComponent(id)}/stock`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stockQuantity: nextStock }),
+      });
+      if (!res.ok) throw new Error('Failed to save stock');
+    } catch {
+      setLoadError(true);
+      setItems((current) => current.map((item) => (
+        item.id === id ? { ...item, stock: target.stock } : item
+      )));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // PATCH /api/Shops/{shopId}/orders/{transactionId}/complete — marks a customer order Completed in Transactions table.
+  const handleCompleteOrder = async (transactionId) => {
+    setCompletingOrderId(transactionId);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/Shops/${DEFAULT_SHOP_ID}/orders/${encodeURIComponent(transactionId)}/complete`, {
+        method: 'PATCH',
+      });
+      if (!res.ok) throw new Error('Could not complete order');
+      setOrders((current) => current.map((order) => (
+        order.id === transactionId ? { ...order, status: 'Completed' } : order
+      )));
+    } catch {
+      setLoadError(true);
+    } finally {
+      setCompletingOrderId('');
+    }
   };
 
   const handleSendMessage = (event) => {
@@ -123,7 +186,7 @@ function ShopOwner() {
   const nav = [
     { id: 'inventory', label: 'Inventory', icon: '▣' },
     { id: 'orders', label: 'Orders & payments', icon: '▤', count: pendingOrders.length },
-    { id: 'support', label: 'Support chat', icon: '◌', count: 2 },
+    { id: 'support', label: 'Support chat', icon: '◌', count: openChats },
     { id: 'storefront', label: 'Storefront', icon: '★' },
   ];
 
@@ -139,12 +202,17 @@ function ShopOwner() {
       returnTo="/shop"
       returnLabel="View public shop"
     >
-      {loadError && <DashboardError onRetry={handleRetry} />}
-      <section className="dash-attention" aria-label="Needs attention">
-        <span className="dash-attention-icon" aria-hidden="true">!</span>
-        <div><strong>2 orders need you</strong><span>1 GCash proof to confirm · 1 ready for pickup</span></div>
-        <button type="button" className="dash-attention-button" onClick={() => setActiveTab('orders')}>Review orders</button>
-      </section>
+      {loadError && <DashboardError onRetry={loadDashboard} />}
+      {pendingOrders.length > 0 && (
+        <section className="dash-attention" aria-label="Needs attention">
+          <span className="dash-attention-icon" aria-hidden="true">!</span>
+          <div>
+            <strong>{pendingOrders.length} order{pendingOrders.length === 1 ? '' : 's'} need{pendingOrders.length === 1 ? 's' : ''} you</strong>
+            <span>Review customer payments and confirm campus handoffs</span>
+          </div>
+          <button type="button" className="dash-attention-button" onClick={() => setActiveTab('orders')}>Review orders</button>
+        </section>
+      )}
 
       <section className="dash-stats" aria-label="Shop overview">
         {isLoading ? (
@@ -157,9 +225,9 @@ function ShopOwner() {
         ) : (
           <>
             <DashboardStat icon="▣" label="Items live" value={liveItems} hint={`${soldOutItems} sold out`} onClick={() => setActiveTab('inventory')} />
-            <DashboardStat icon="↗" label="Orders pending" value={pendingOrders.length} hint="Oldest waiting 1 day" attention onClick={() => setActiveTab('orders')} />
-            <DashboardStat icon="₱" label="Revenue this week" value="₱2,790" hint="+₱420 vs last week" onClick={() => setActiveTab('orders')} />
-            <DashboardStat icon="✦" label="Support chats" value="2" hint="Avg reply 18 min" onClick={() => setActiveTab('support')} />
+            <DashboardStat icon="↗" label="Orders pending" value={pendingOrders.length} hint={`${orders.length} total recorded`} attention={pendingOrders.length > 0} onClick={() => setActiveTab('orders')} />
+            <DashboardStat icon="₱" label="Recorded sales" value={`₱${totalRevenue.toLocaleString('en-PH')}`} hint="From live transactions" onClick={() => setActiveTab('orders')} />
+            <DashboardStat icon="✦" label="Support chats" value={openChats} hint="Customer messages" onClick={() => setActiveTab('support')} />
           </>
         )}
       </section>
@@ -235,20 +303,27 @@ function ShopOwner() {
           </div>
           {isLoading ? (
             <><DashboardRowSkeleton /><DashboardRowSkeleton /><DashboardRowSkeleton /></>
-          ) : initialOrders.length ? (
+          ) : orders.length ? (
             <div className="dash-orders-list">
-              {initialOrders.map((order) => (
+              {orders.map((order) => (
                 <article className="dash-order-row" key={order.id}>
                   <span className="dash-order-mark" aria-hidden="true">₱</span>
-                  <span className="dash-order-copy"><strong>{order.item}</strong><span>{order.id} · {order.buyer} · {order.total}</span></span>
+                  <span className="dash-order-copy"><strong>{order.item}</strong><span>{order.shortId} · {order.buyer} · {order.total}</span></span>
                   <span className="dash-order-payment"><strong>{order.method}</strong><span>{order.proof}</span></span>
                   <span className={`dash-stock-status ${order.status === 'Completed' ? 'in-stock' : 'low-stock'}`}>{order.status}</span>
-                  <button type="button" className="dash-outline-button" disabled={order.status === 'Completed'}>{order.proof === 'Proof uploaded' ? 'View proof' : 'Update'}</button>
+                  <button
+                    type="button"
+                    className="dash-outline-button"
+                    disabled={order.status === 'Completed' || completingOrderId === order.id}
+                    onClick={() => handleCompleteOrder(order.id)}
+                  >
+                    {order.status === 'Completed' ? 'Completed' : completingOrderId === order.id ? 'Saving...' : 'Mark completed'}
+                  </button>
                 </article>
               ))}
             </div>
           ) : (
-            <div className="dash-empty-list"><strong>No orders yet</strong><span>New campus orders will appear here.</span></div>
+            <div className="dash-empty-list"><strong>No orders yet</strong><span>New campus orders will appear here when students purchase your items.</span></div>
           )}
         </section>
       )}
@@ -295,18 +370,18 @@ function ShopOwner() {
               <div className="dash-store-banner">
                 <span className="dash-store-emblem">ESC</span>
                 <div>
-                  <span className="dash-approved">✓ Admin approved shop</span>
+                  <span className="dash-approved">✓ {shop.status === 'Approved' ? 'Admin approved shop' : 'Pending approval'}</span>
                   <h3>{shop.name}</h3>
                   <p>{shop.subtitle} · Student Center, CIT-U</p>
                   <div className="dash-store-rating"><Stars rating={shop.rating} count={shop.reviews} /><span>Accepts GCash QR &amp; cash</span></div>
                 </div>
               </div>
-              {shopItems.length ? (
+              {items.length ? (
                 <div className="dash-store-items">
-                  {shopItems.map((item) => (
+                  {items.map((item) => (
                     <article className="dash-store-item" key={item.id}>
                       <span className="dash-store-item-art"><Illustration type={item.art} /></span>
-                      <div><strong>{item.name}</strong><span>{item.description}</span><small>{item.price}</small></div>
+                      <div><strong>{item.name}</strong><span>{item.description} · {item.stock} in stock</span><small>{item.price}</small></div>
                     </article>
                   ))}
                 </div>

@@ -1,29 +1,96 @@
-import React, { useState } from 'react';
-import { Link, useParams } from 'react-router';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import Illustration from '../components/Illustration';
 import Logo from '../components/Logo';
-import inventory from '../data/shopOwnerInventory';
+import { API_BASE_URL } from '../utils/api';
 
+const DEFAULT_SHOP_ID = '44444444-4444-4444-4444-444444444444';
 const availableSizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'A5', 'One size'];
+const categoryOptions = ['Apparel', 'Org merch', 'School supplies', 'Accessories', 'PE gear', 'Lab gear', 'Food & drinks', 'Other'];
+
+function pickArt(category = '', title = '') {
+  const text = `${category} ${title}`.toLowerCase();
+  if (text.includes('book') || text.includes('supply') || text.includes('supplies') || text.includes('note')) return 'book';
+  if (text.includes('calc')) return 'calculator';
+  if (text.includes('lab') || text.includes('meter') || text.includes('pe')) return 'multimeter';
+  return 'shirt';
+}
 
 function ShopOwnerInventoryForm({ mode }) {
   const { itemId } = useParams();
-  const existingItem = mode === 'edit' ? inventory.find((item) => item.id === itemId) : null;
-  const [form, setForm] = useState(() => ({
-    name: existingItem?.name ?? '',
-    description: existingItem?.description ?? '',
-    category: existingItem?.category ?? 'Apparel',
-    price: existingItem?.price.replace(/[^\d.]/g, '') ?? '',
-    stock: existingItem?.stock ?? 0,
-    sizes: existingItem?.sizes ?? [],
-    art: existingItem?.art ?? 'shirt',
-  }));
+  const navigate = useNavigate();
+
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    category: 'Apparel',
+    price: '',
+    stock: 1,
+    sizes: [],
+    art: 'shirt',
+    isRentable: false,
+  });
+  const [loading, setLoading] = useState(mode === 'edit');
+  const [notFound, setNotFound] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [apiError, setApiError] = useState('');
   const [saved, setSaved] = useState(false);
+
+  // In edit mode, load the existing item from SQL Server via GET /api/Listings/{itemId}.
+  useEffect(() => {
+    if (mode !== 'edit' || !itemId) {
+      setLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setNotFound(false);
+    setApiError('');
+
+    // GET /api/Listings/{itemId} — fetches current title, category, price, and stock from Listings table.
+    fetch(`${API_BASE_URL}/api/Listings/${encodeURIComponent(itemId)}`)
+      .then(async (res) => {
+        if (res.status === 404) {
+          if (!cancelled) setNotFound(true);
+          return;
+        }
+        if (!res.ok) throw new Error('Could not load item.');
+        const data = await res.json();
+        if (!cancelled) {
+          setForm({
+            name: data.title ?? '',
+            description: '',
+            category: data.category ?? 'Apparel',
+            price: String(data.price ?? ''),
+            stock: Number(data.stockQuantity ?? 0),
+            sizes: [],
+            art: pickArt(data.category, data.title),
+            isRentable: Boolean(data.isRentable),
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setApiError('Cannot load item from backend. Make sure the API is running.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [itemId, mode]);
 
   const updateField = (event) => {
     const { name, value } = event.target;
-    setForm((current) => ({ ...current, [name]: value }));
+    setForm((current) => {
+      const next = { ...current, [name]: value };
+      if (name === 'category' || name === 'name') {
+        next.art = pickArt(next.category, next.name);
+      }
+      return next;
+    });
     setSaved(false);
+    setApiError('');
   };
 
   const toggleSize = (size) => {
@@ -36,12 +103,71 @@ function ShopOwnerInventoryForm({ mode }) {
     setSaved(false);
   };
 
-  const handleSubmit = (event) => {
+  // Submits the form to SQL Server:
+  // Add mode  -> POST /api/Shops/{shopId}/inventory
+  // Edit mode -> PUT  /api/Shops/{shopId}/inventory/{listingId}
+  const handleSubmit = async (event) => {
     event.preventDefault();
-    setSaved(true);
+    if (submitting) return;
+
+    setSubmitting(true);
+    setApiError('');
+    setSaved(false);
+
+    const payload = {
+      title: form.name.trim(),
+      category: form.category,
+      price: Number(form.price),
+      stockQuantity: Number(form.stock),
+      isRentable: form.isRentable,
+    };
+
+    const url = mode === 'edit'
+      ? `${API_BASE_URL}/api/Shops/${DEFAULT_SHOP_ID}/inventory/${encodeURIComponent(itemId)}`
+      : `${API_BASE_URL}/api/Shops/${DEFAULT_SHOP_ID}/inventory`;
+
+    try {
+      const res = await fetch(url, {
+        method: mode === 'edit' ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setApiError(data.message || 'Could not save inventory item.');
+        return;
+      }
+
+      setSaved(true);
+      window.setTimeout(() => navigate('/shop-owner'), 600);
+    } catch {
+      setApiError('Cannot connect to backend server. Make sure the API is running.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  if (mode === 'edit' && !existingItem) {
+  if (mode === 'edit' && loading) {
+    return (
+      <main className="admin-layout">
+        <aside className="admin-sidebar">
+          <Link to="/shop-owner" className="admin-brand"><Logo variant="dark" /></Link>
+          <span className="admin-label">SHOP WORKSPACE</span>
+          <Link to="/shop-owner" className="admin-exit">← Return to inventory</Link>
+        </aside>
+        <section className="admin-content">
+          <div className="admin-panel card inventory-not-found">
+            <span className="eyebrow">Inventory</span>
+            <h1>Loading item...</h1>
+            <p>Fetching item details from SQL Server.</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (mode === 'edit' && notFound) {
     return (
       <main className="admin-layout">
         <aside className="admin-sidebar">
@@ -53,7 +179,7 @@ function ShopOwnerInventoryForm({ mode }) {
           <div className="admin-panel card inventory-not-found">
             <span className="eyebrow">Inventory</span>
             <h1>Item not found</h1>
-            <p>This item may have been removed from the demo inventory.</p>
+            <p>This item may have been removed from the database.</p>
             <Link to="/shop-owner" className="btn btn-primary">Return to inventory</Link>
           </div>
         </section>
@@ -110,11 +236,9 @@ function ShopOwnerInventoryForm({ mode }) {
               <label className="inventory-field">
                 <span>Category</span>
                 <select name="category" value={form.category} onChange={updateField}>
-                  <option>Apparel</option>
-                  <option>School supplies</option>
-                  <option>Accessories</option>
-                  <option>Food &amp; drinks</option>
-                  <option>Other</option>
+                  {categoryOptions.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
                 </select>
               </label>
               <label className="inventory-field">
@@ -163,9 +287,12 @@ function ShopOwnerInventoryForm({ mode }) {
           </aside>
 
           <div className="inventory-form-actions">
-            {saved && <p className="inventory-saved" role="status">{mode === 'edit' ? 'Changes saved in this preview.' : 'Item added in this preview.'}</p>}
+            {apiError && <p className="field-error" role="alert">{apiError}</p>}
+            {saved && <p className="inventory-saved" role="status">{mode === 'edit' ? 'Changes saved to database!' : 'Item added to database!'}</p>}
             <Link to="/shop-owner" className="btn btn-secondary">Cancel</Link>
-            <button type="submit" className="btn btn-primary">{mode === 'edit' ? 'Save changes' : 'Add item'}</button>
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? 'Saving...' : mode === 'edit' ? 'Save changes' : 'Add item'}
+            </button>
           </div>
         </form>
       </section>
