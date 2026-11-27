@@ -3,6 +3,20 @@ import { supabase } from '../lib/supabaseClient';
 
 const REPORT_FIELDS = 'id, reporter_id, target_user_id, target_listing_id, status, resolution_note, created_at';
 const FINAL_REPORT_STATUSES = ['dismissed', 'resolved'];
+const DISMISSED_UPDATE_KEY = 'swapspot:dismissed-report-updates';
+
+function readDismissedUpdates(userId) {
+  if (!userId) return new Set();
+  try {
+    const stored = window.localStorage.getItem(`${DISMISSED_UPDATE_KEY}:${userId}`);
+    const ids = stored ? JSON.parse(stored) : [];
+    if (!Array.isArray(ids)) throw new Error('Stored dismissed report updates are invalid.');
+    return new Set(ids.filter((id) => typeof id === 'string'));
+  } catch (error) {
+    console.error('Could not read dismissed report updates:', error);
+    return new Set();
+  }
+}
 
 function describeUpdate(report, listing, userId) {
   const isReporter = report.reporter_id === userId;
@@ -47,6 +61,28 @@ function ReportNotifications({ userId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retryCount, setRetryCount] = useState(0);
+  const [dismissedUpdateIds, setDismissedUpdateIds] = useState(() => readDismissedUpdates(userId));
+
+  useEffect(() => {
+    setDismissedUpdateIds(readDismissedUpdates(userId));
+  }, [userId]);
+
+  const dismissUpdates = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const nextDismissedIds = new Set(dismissedUpdateIds);
+    updates.forEach((update) => nextDismissedIds.add(update.id));
+    setDismissedUpdateIds(nextDismissedIds);
+    setUpdates([]);
+    try {
+      window.localStorage.setItem(
+        `${DISMISSED_UPDATE_KEY}:${userId}`,
+        JSON.stringify([...nextDismissedIds]),
+      );
+    } catch (storageError) {
+      console.error('Could not save dismissed report updates:', storageError);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -130,14 +166,24 @@ function ReportNotifications({ userId }) {
       </div>
     );
   }
-  if (!updates.length) return null;
+  const visibleUpdates = updates.filter((update) => !dismissedUpdateIds.has(update.id));
+  if (!visibleUpdates.length) return null;
 
   return (
     <section className="dash-card report-notifications" aria-label="Report notifications">
       <div className="dash-list-heading">
         <div><span className="dash-section-eyebrow">ACCOUNT NOTIFICATIONS</span><h2>Admin updates</h2></div>
+        <button
+          type="button"
+          className="report-notification-dismiss"
+          onClick={dismissUpdates}
+          aria-label="Dismiss admin updates"
+          title="Dismiss admin updates"
+        >
+          ×
+        </button>
       </div>
-      {updates.map((update) => (
+      {visibleUpdates.map((update) => (
         <article className="dash-attention report-notification-item" key={update.id} role="status">
           <span className="dash-attention-icon" aria-hidden="true">!</span>
           <div>

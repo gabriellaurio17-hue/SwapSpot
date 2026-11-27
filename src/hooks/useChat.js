@@ -116,6 +116,20 @@ export default function useChat(listingId, sellerId, existingThreadId = null) {
             (payload) => {
               if (!cancelled && payload.new) {
                 setMessages((current) => mergeMessages(current, [payload.new]));
+                if (
+                  payload.new.sender_id !== userId
+                  && (typeof document === 'undefined' || document.visibilityState === 'visible')
+                ) {
+                  supabase.rpc('mark_chat_thread_read', { p_thread_id: thread.id }).then(({ error: readError }) => {
+                    if (!cancelled && readError) {
+                      setError(getErrorMessage(readError, 'Could not mark this conversation as read.'));
+                    }
+                  }).catch((readError) => {
+                    if (!cancelled) {
+                      setError(getErrorMessage(readError, 'Could not mark this conversation as read.'));
+                    }
+                  });
+                }
               }
             }
           )
@@ -134,6 +148,10 @@ export default function useChat(listingId, sellerId, existingThreadId = null) {
         if (messageError) throw messageError;
         if (cancelled) return;
         setMessages((current) => mergeMessages(current, data || []));
+        const { error: readError } = await supabase.rpc('mark_chat_thread_read', {
+          p_thread_id: thread.id,
+        });
+        if (readError) throw readError;
       } catch (loadError) {
         if (!cancelled) setError(getErrorMessage(loadError, 'Could not load this conversation.'));
       } finally {

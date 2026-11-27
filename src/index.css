@@ -1218,7 +1218,10 @@ h1 em, h2 em { color: var(--maroon-700); font-weight: 400; }
 .dash-skeleton-card > span:nth-child(4) { width: 65%; }
 .dash-attention { min-height: 65px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid #D4A32E; border-radius: 15px; background: #FFF1C9; color: #3F2B09; }
 .report-notifications { margin-bottom: 24px; padding: 6px 0 8px; }
+.report-notifications .dash-list-heading { margin-right: 20px; margin-left: 20px; }
 .report-notification-item { margin: 12px 20px; padding: 13px 17px; }
+.report-notification-dismiss { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; border: 1px solid #D7C8B3; border-radius: 50%; background: #fffaf2; color: #5A0B18; font-size: 22px; line-height: 1; cursor: pointer; }
+.report-notification-dismiss:hover { border-color: #5A0B18; background: #F7EDE0; }
 .dash-attention-icon { width: 34px; height: 34px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #E3B341; color: #3F0712; font-size: 17px; font-weight: 900; }
 .dash-attention > div { display: grid; flex: 1; gap: 2px; }
 .dash-attention strong { font-size: 13px; }

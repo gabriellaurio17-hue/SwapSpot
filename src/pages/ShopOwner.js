@@ -16,6 +16,21 @@ import { supabase } from '../lib/supabaseClient';
 
 const filters = ['All', 'Low stock', 'Sold out'];
 
+function getWeekStart() {
+  const weekStart = new Date();
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  return weekStart;
+}
+
+function formatCurrency(value) {
+  return Number(value || 0).toLocaleString('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+    maximumFractionDigits: 2,
+  });
+}
+
 function ShopOwner() {
   const { profile, user } = useAuth();
   const [activeTab, setActiveTab] = useState('inventory');
@@ -27,8 +42,11 @@ function ShopOwner() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [metricsError, setMetricsError] = useState('');
+  const [liveUpdateError, setLiveUpdateError] = useState('');
   const [stockError, setStockError] = useState('');
-  const [chatCount, setChatCount] = useState(0);
+  const [unreadChatCount, setUnreadChatCount] = useState(null);
+  const [revenueThisWeek, setRevenueThisWeek] = useState(null);
   const [mappedShopOwner, setMappedShopOwner] = useState(null);
   const shopTitle = (shop?.name || 'My shop').split(' ');
   const pendingOrders = orders.filter((order) => order.paymentStatus !== 'paid');
@@ -41,15 +59,16 @@ function ShopOwner() {
     }
   }, [profile]);
 
-  const fetchShopData = useCallback(async () => {
+  const fetchShopData = useCallback(async (silent = false) => {
     if (!user?.id) {
       setIsLoading(false);
       setLoadError('Please log in to manage your shop.');
       return;
     }
 
-    setIsLoading(true);
+    if (!silent) setIsLoading(true);
     setLoadError('');
+    setMetricsError('');
     try {
       const { data: shopData, error: shopError } = await supabase
         .from('shops')
@@ -62,6 +81,9 @@ function ShopOwner() {
       if (!shopData) {
         setItems([]);
         setOrders([]);
+        setUnreadChatCount(0);
+        setRevenueThisWeek(0);
+        setMetricsError('');
         setLoadError('No shop is associated with this account.');
         return;
       }
@@ -69,7 +91,6 @@ function ShopOwner() {
       const [
         { data: listingData, error: listingError },
         { data: transactionData, error: transactionError },
-        { count: conversations, error: conversationsError },
       ] = await Promise.all([
         supabase
           .from('listings')
@@ -82,23 +103,17 @@ function ShopOwner() {
           .select('id, listing_id, buyer_id, payment_method, payment_status, created_at')
           .eq('seller_id', user.id)
           .order('created_at', { ascending: false }),
-        supabase
-          .from('chat_threads')
-          .select('id', { count: 'exact', head: true })
-          .eq('seller_id', user.id),
       ]);
       if (listingError) throw listingError;
-      if (transactionError) throw transactionError;
-      if (conversationsError) throw conversationsError;
       setItems((listingData || []).map(mapShopInventoryItem));
-      setChatCount(conversations || 0);
+      if (transactionError) throw transactionError;
 
       const txRows = transactionData || [];
       const listingIds = [...new Set(txRows.map((row) => row.listing_id).filter(Boolean))];
       const buyerIds = [...new Set(txRows.map((row) => row.buyer_id).filter(Boolean))];
       const [listingResult, buyerResult] = await Promise.all([
         listingIds.length
-          ? supabase.from('listings').select('id, title').in('id', listingIds)
+          ? supabase.from('listings').select('id, title, listing_type').in('id', listingIds)
           : Promise.resolve({ data: [], error: null }),
         buyerIds.length
           ? supabase.from('public_profiles').select('id, full_name').in('id', buyerIds)
@@ -117,10 +132,43 @@ function ShopOwner() {
         method: row.payment_method === 'gcash' ? 'GCash' : row.payment_method === 'cash' ? 'Cash' : 'Not selected',
         paymentStatus: row.payment_status,
       })));
+      if (!silent) setIsLoading(false);
+
+      const weekStart = getWeekStart().toISOString();
+      const [revenueResult, unreadChatResult] = await Promise.allSettled([
+        supabase
+          .from('transactions')
+          .select('amount')
+          .eq('seller_id', user.id)
+          .eq('payment_status', 'paid')
+          .gte('paid_at', weekStart),
+        supabase.rpc('shop_owner_unread_chat_count'),
+      ]);
+      const metricErrors = [];
+
+      if (revenueResult.status === 'fulfilled' && !revenueResult.value.error) {
+        setRevenueThisWeek((revenueResult.value.data || [])
+          .reduce((total, row) => total + Number(row.amount || 0), 0));
+      } else {
+        const error = revenueResult.status === 'rejected'
+          ? revenueResult.reason
+          : revenueResult.value.error;
+        setRevenueThisWeek(null);
+        metricErrors.push(`Revenue: ${error.message || 'unavailable'}`);
+      }
+
+      if (unreadChatResult.status === 'fulfilled' && !unreadChatResult.value.error) {
+        setUnreadChatCount(Number(unreadChatResult.value.data) || 0);
+      } else {
+        const error = unreadChatResult.status === 'rejected'
+          ? unreadChatResult.reason
+          : unreadChatResult.value.error;
+        setUnreadChatCount(null);
+        metricErrors.push(`Support chats: ${error.message || 'unavailable'}`);
+      }
+      setMetricsError(metricErrors.join(' '));
     } catch (error) {
       setLoadError(error.message || 'Could not load your shop data.');
-      setItems([]);
-      setOrders([]);
     } finally {
       setIsLoading(false);
     }
@@ -129,6 +177,50 @@ function ShopOwner() {
   useEffect(() => {
     fetchShopData();
   }, [fetchShopData]);
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    let refreshTimeout;
+    const scheduleRefresh = () => {
+      window.clearTimeout(refreshTimeout);
+      refreshTimeout = window.setTimeout(() => fetchShopData(true), 200);
+    };
+    const channel = supabase
+      .channel(`shop-owner-dashboard-${user.id}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'listings',
+        filter: `seller_id=eq.${user.id}`,
+      }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'transactions',
+        filter: `seller_id=eq.${user.id}`,
+      }, scheduleRefresh)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chat_threads',
+        filter: `seller_id=eq.${user.id}`,
+      }, scheduleRefresh)
+      .subscribe((status, subscriptionError) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setLiveUpdateError(subscriptionError?.message || 'Live dashboard updates are unavailable.');
+        } else if (status === 'SUBSCRIBED') {
+          setLiveUpdateError('');
+        }
+      });
+
+    return () => {
+      window.clearTimeout(refreshTimeout);
+      supabase.removeChannel(channel).then((status) => {
+        if (status !== 'ok') console.error('Failed to remove shop dashboard channel:', status);
+      }).catch((error) => console.error('Failed to remove shop dashboard channel:', error));
+    };
+  }, [fetchShopData, user?.id]);
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -141,7 +233,7 @@ function ShopOwner() {
     });
   }, [filter, items, search]);
 
-  const liveItems = items.filter((item) => item.stock > 0).length;
+  const liveItems = items.filter((item) => item.status === 'available' && item.stock > 0).length;
   const soldOutItems = items.filter((item) => item.stock === 0).length;
 
   const handleRetry = () => {
@@ -186,7 +278,7 @@ function ShopOwner() {
   const nav = [
     { id: 'inventory', label: 'Inventory', icon: '▣' },
     { id: 'orders', label: 'Orders & payments', icon: '▤', count: pendingOrders.length },
-    { id: 'support', label: 'Support chat', icon: '◌', count: chatCount },
+    { id: 'support', label: 'Support chat', icon: '◌', count: unreadChatCount === null ? undefined : unreadChatCount },
     { id: 'storefront', label: 'Storefront', icon: '★' },
     { id: 'account', label: 'Account', icon: '◌' },
   ];
@@ -205,6 +297,11 @@ function ShopOwner() {
     >
       <ReportNotifications userId={user?.id} />
       {loadError && <DashboardError onRetry={handleRetry} />}
+      {(metricsError || liveUpdateError) && (
+        <p className="dash-readonly-note" role="status">
+          {[metricsError, liveUpdateError].filter(Boolean).join(' ')}
+        </p>
+      )}
       {shop && shop.status !== 'approved' && (
         <section className="dash-attention" aria-label="Shop approval status">
           <span className="dash-attention-icon" aria-hidden="true">!</span>
@@ -231,8 +328,8 @@ function ShopOwner() {
           <>
             <DashboardStat icon="▣" label="Items live" value={liveItems} hint={`${soldOutItems} sold out`} onClick={() => setActiveTab('inventory')} />
             <DashboardStat icon="↗" label="Orders pending" value={pendingOrders.length} hint="Oldest waiting 1 day" attention onClick={() => setActiveTab('orders')} />
-            <DashboardStat icon="₱" label="Revenue this week" value="—" hint="Based on completed transactions" onClick={() => setActiveTab('orders')} />
-            <DashboardStat icon="✦" label="Support chats" value={chatCount} hint="Open buyer conversations" onClick={() => setActiveTab('support')} />
+            <DashboardStat icon="₱" label="Revenue this week" value={revenueThisWeek === null ? '—' : formatCurrency(revenueThisWeek)} hint="Paid item sales this week" onClick={() => setActiveTab('orders')} />
+            <DashboardStat icon="✦" label="Support chats" value={unreadChatCount === null ? '—' : unreadChatCount} hint="Unread buyer conversations" onClick={() => setActiveTab('support')} />
           </>
         )}
       </section>
@@ -334,7 +431,7 @@ function ShopOwner() {
         <section className="dash-card dash-support-card">
           <div className="dash-list-heading">
             <div><span className="dash-section-eyebrow">CUSTOMER CARE</span><h2>Support chat</h2></div>
-            <span className="dash-count-light">{chatCount} conversations</span>
+            <span className="dash-count-light">{unreadChatCount === null ? 'Unavailable' : `${unreadChatCount} unread`}</span>
           </div>
           {isLoading ? (
             <DashboardRowSkeleton />
@@ -342,8 +439,14 @@ function ShopOwner() {
             <p className="field-error" role="alert">{loadError}</p>
           ) : (
             <div className="dash-empty-list">
-              <strong>{chatCount ? `${chatCount} buyer conversations` : 'No buyer conversations yet'}</strong>
-              <span>Open your inbox to read and reply to buyer messages.</span>
+              <strong>
+                {unreadChatCount === null
+                  ? 'Unread count unavailable'
+                  : unreadChatCount
+                    ? `${unreadChatCount} unread buyer chats`
+                    : 'You’re all caught up'}
+              </strong>
+              <span>Messages are marked as read when you open their conversation.</span>
               <Link to="/messages" className="dash-primary-button">Open messages</Link>
             </div>
           )}
