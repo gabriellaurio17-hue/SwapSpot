@@ -138,17 +138,17 @@ function ShopOwner() {
       const [revenueResult, unreadChatResult] = await Promise.allSettled([
         supabase
           .from('transactions')
-          .select('amount')
+          .select('listing_id, created_at, listings!inner(price)')
           .eq('seller_id', user.id)
           .eq('payment_status', 'paid')
-          .gte('paid_at', weekStart),
+          .gte('created_at', weekStart),
         supabase.rpc('shop_owner_unread_chat_count'),
       ]);
       const metricErrors = [];
 
       if (revenueResult.status === 'fulfilled' && !revenueResult.value.error) {
         setRevenueThisWeek((revenueResult.value.data || [])
-          .reduce((total, row) => total + Number(row.amount || 0), 0));
+          .reduce((total, row) => total + Number(row.listings?.price || 0), 0));
       } else {
         const error = revenueResult.status === 'rejected'
           ? revenueResult.reason
