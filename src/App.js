@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { AuthProvider, ROLES, useAuth } from './context/AuthContext';
+import ReportNotifications from './components/ReportNotifications';
 
 const Landing = lazy(() => import('./pages/Landing'));
 const Auth = lazy(() => import('./pages/Auth'));
@@ -85,24 +86,29 @@ function AccessDeniedNotice() {
   );
 }
 
-function AppInner() {
-  const { role, loading, signOut } = useAuth();
-  const [suspended, setSuspended] = React.useState(false);
+function SuspendedAccountNotice() {
+  const { user, signOut } = useAuth();
 
-  useEffect(() => {
-    if (!loading && role === ROLES.suspended) {
-      setSuspended(true);
-      signOut();
-    }
-  }, [loading, role, signOut]);
+  return (
+    <main className="container" style={{ paddingBlock: 40 }}>
+      <section className="dash-attention" role="alert">
+        <span className="dash-attention-icon" aria-hidden="true">!</span>
+        <div><strong>Your account is suspended.</strong><span>Review the admin update below for details.</span></div>
+      </section>
+      <ReportNotifications userId={user?.id} />
+      <button type="button" className="btn btn-secondary" onClick={signOut}>Log out</button>
+    </main>
+  );
+}
+
+function AppInner() {
+  const { role, loading } = useAuth();
 
   if (loading) {
     return <main className="loading-screen" aria-label="Loading SwapSpot"><span className="loading-mark">S</span></main>;
   }
 
-  if (suspended) {
-    return <div className="dash-access-notice" role="alert"><span>Your account is suspended.</span></div>;
-  }
+  if (role === ROLES.suspended) return <SuspendedAccountNotice />;
 
   return (
     <>

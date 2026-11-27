@@ -6,6 +6,7 @@ import {
   DashboardStat,
 } from '../components/DashboardShell';
 import GcashQrSettings from '../components/GcashQrSettings';
+import ReportNotifications from '../components/ReportNotifications';
 import { useAuth } from '../context/AuthContext';
 import { mapProfile } from '../lib/mappers';
 
@@ -73,6 +74,7 @@ function Profile() {
       returnTo="/browse"
       returnLabel="Back to browse"
     >
+      <ReportNotifications userId={user?.id} />
       {isSuspended && (
         <section className="dash-attention" aria-label="Account status" style={{ marginTop: 24 }}>
           <span className="dash-attention-icon" aria-hidden="true">!</span>

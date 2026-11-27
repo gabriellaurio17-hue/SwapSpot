@@ -9,6 +9,7 @@ import {
 } from '../components/DashboardShell';
 import GcashQrSettings from '../components/GcashQrSettings';
 import Illustration from '../components/Illustration';
+import ReportNotifications from '../components/ReportNotifications';
 import { useAuth } from '../context/AuthContext';
 import { mapProfile, mapShopInventoryItem } from '../lib/mappers';
 import { supabase } from '../lib/supabaseClient';
@@ -202,6 +203,7 @@ function ShopOwner() {
       returnTo="/"
       returnLabel="Return to marketplace"
     >
+      <ReportNotifications userId={user?.id} />
       {loadError && <DashboardError onRetry={handleRetry} />}
       {shop && shop.status !== 'approved' && (
         <section className="dash-attention" aria-label="Shop approval status">
